@@ -1,9 +1,21 @@
-from typing import Callable
+from typing import Callable, Optional
 
-from perfect_hash._core import hello_from_bin
 from perfect_hash._core import generate_hasher
 
-def generate_hash(keys: list[str] | set[str]) -> Callable[[str], int]:
+
+class Hash:
+
+    def __init__(self, hasher):
+        self._hasher = hasher
+
+    def __call__(self, *args, **kwds):
+        return self._hasher.call(args[0])
+
+
+def generate_hash(
+        keys: list[str] | set[str],
+        order: Optional[list[int]] = None,
+        ) -> Callable[[str], int]:
     """Generate a perfect hash function for a set of keys.
 
     Args:
@@ -21,5 +33,12 @@ def generate_hash(keys: list[str] | set[str]) -> Callable[[str], int]:
     if len(keys) != len(set(keys)):
         raise ValueError("All keys must be unique.")
 
+    if order:
+        assert set(order) == set(range(len(keys)))
+        _keys = [keys[i] for i in order]
+    else:
+        _keys = list(keys)
+
     # Generate the perfect hash function.
-    return generate_hasher(list(keys))
+    h = generate_hasher(_keys)
+    return Hash(h)

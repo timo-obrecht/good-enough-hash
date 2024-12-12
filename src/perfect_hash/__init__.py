@@ -4,3 +4,7 @@ from perfect_hash.generation import generate_hash
 def main() -> None:
     keys = "Je suis un ensemble de clés".split()
     print(generate_hash(keys))
+
+
+if __name__ == "__main__":
+    main()

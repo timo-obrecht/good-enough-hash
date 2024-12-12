@@ -9,4 +9,10 @@ def test_creation():
     # with pytest.raises(Exception):
     #     pass
 
-    generate_hash(keys)
+    hash = generate_hash(keys)
+    assert hash("Je") == 0
+    assert hash("suis") == 1
+    assert hash("un") == 2
+    assert hash("ensemble") == 3
+    assert hash("de") == 4
+    assert hash("clés") == 5

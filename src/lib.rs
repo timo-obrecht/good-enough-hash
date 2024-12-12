@@ -4,6 +4,27 @@ use rand::thread_rng;
 use rand::Rng;
 use std::collections::HashMap;
 
+use pyo3::ffi::PyErr_CheckSignals;
+
+
+
+#[macro_export]
+// #[cfg(not(test))]
+macro_rules! python_interupt {
+    ($n_iter: expr, $period: expr) => {
+        if $n_iter % $period == 0 {
+            unsafe {if PyErr_CheckSignals() == -1 {panic!("Keyboard interupt");}}
+        }
+    };
+}
+
+// #[macro_export]
+// #[cfg(test)]
+// macro_rules! python_interupt {
+//     ($n_iter: expr, $period: expr) => {};
+// }
+
+
 struct Graph {
     n: usize,
     vertex_values: Vec<Option<usize>>,
@@ -23,26 +44,30 @@ impl Graph {
 
 
     fn connect(&mut self, vertex1: usize, vertex2: usize, edge_value: usize) {
+        // println!("connecting {:?} and {:?}", vertex1, vertex2);
         self.adjacent.entry(vertex1).or_insert_with(Vec::new).push((vertex2, edge_value));
         self.adjacent.entry(vertex2).or_insert_with(Vec::new).push((vertex1, edge_value));
     }
+
 
     fn assign_vertex_values(&mut self) -> bool {
         self.vertex_values = vec![None; self.n];
         let mut visited = vec![false; self.n];
 
-        for root in 0..self.n {
-            if visited[root] {
+        for root in self.adjacent.keys() {
+            if visited[*root] {
                 continue;
             }
 
-            self.vertex_values[root] = Some(0);
-            let mut tovisit = vec![(None, root)];
+            self.vertex_values[*root] = Some(0);
+            let mut tovisit = vec![(None, *root)];
 
             while let Some((parent, vertex)) = tovisit.pop() {
                 visited[vertex] = true;
 
                 let mut skip = true;
+                // println!("searching for key {:?}", vertex);
+                // println!("adjacent is long : {:?}", self.adjacent.len());
                 for &(neighbor, edge_value) in &self.adjacent[&vertex] {
                     if skip && Some(neighbor) == parent {
                         skip = false;
@@ -59,11 +84,11 @@ impl Graph {
             }
         }
 
-        for value in &self.vertex_values {
-            if value.is_none() {
-                return false;
-            }
-        }
+        // for value in &self.vertex_values {
+        //     if value.is_none() {
+        //         return false;
+        //     }
+        // }
         true
     }
 }
@@ -117,24 +142,36 @@ impl Hash {
         let bytes = key.as_bytes();
 
         // vertices[f1.call(key)] + vertices[f2.call(key)]
-
-        // not correct
-        bytes.iter().zip(self.right_bytes.iter()).zip(self.left_bytes.iter())
+        let (a, b) = bytes.iter().zip(self.right_bytes.iter()).zip(self.left_bytes.iter())
         .map(|((k, a), b) | (a.overflowing_mul(*k).0, b.overflowing_mul(*k).0))
-        .fold(0, |acc, (a, b)| acc + (a as usize + b as usize)) % self.modulo
+        .fold((0, 0), |(x, y), (a, b)| ((x + a as usize), (y + b as usize)));
+
+        self.indices[a % self.modulo] + self.indices[b % self.modulo]
     }
 }
 
 
 #[pyfunction]
 fn generate_hasher(keys: Vec<String>) -> Hash {
+    // read the algorithm description here
+    // http://ilan.schnell-web.net/prog/perfect-hash/algo.html
 
-    let nk = keys.len();
-    let ng = nk + 1;
+    let mut ng: usize = keys.len() + 9;
+    let mut iter: usize = 0;
+    let mut max_iter: usize = 32;
 
-    let max_size = keys.iter().map(|x| x.as_bytes().len()).fold(usize::MAX, |acc, a| a.min(acc));
+    let max_size = keys.iter().map(|x| x.as_bytes().len()).fold(usize::MIN, |acc, a| a.max(acc));
+
 
     let (vertices, f1, f2) = loop {
+        iter += 1;
+        if iter > max_iter {
+            ng = ng + ng/4 + 1;
+            max_iter *= 2;
+        }
+
+        python_interupt!(iter, 8);
+
         let mut graph = Graph::new(ng);
         let f1 = BaseHash::new(ng, max_size);
         let f2 = BaseHash::new(ng, max_size);
@@ -144,7 +181,7 @@ fn generate_hasher(keys: Vec<String>) -> Hash {
         }
 
         if graph.assign_vertex_values() {
-            let vertices: Vec<usize> = graph.vertex_values.into_iter().map(|x| x.unwrap()).collect();
+            let vertices: Vec<usize> = graph.vertex_values.into_iter().map(|x| x.unwrap_or_default()).collect();
             break (vertices, f1, f2);
         }
     };
