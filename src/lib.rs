@@ -1,6 +1,5 @@
 use pyo3::prelude::*;
 
-
 use rand::thread_rng;
 use rand::Rng;
 use std::collections::HashMap;
@@ -102,7 +101,7 @@ impl BaseHash {
 
 }
 
-
+#[pyclass]
 struct Hash {
     modulo: usize,
     right_bytes: Vec<u8>,
@@ -110,21 +109,25 @@ struct Hash {
     indices: Vec<usize>
 }
 
+
+#[pymethods]
 impl Hash {
 
-    fn call(&self, key: &String) -> usize {
+    fn call(&self, key: String) -> usize {
         let bytes = key.as_bytes();
 
         // vertices[f1.call(key)] + vertices[f2.call(key)]
 
-        // npt correct
+        // not correct
         bytes.iter().zip(self.right_bytes.iter()).zip(self.left_bytes.iter())
         .map(|((k, a), b) | (a.overflowing_mul(*k).0, b.overflowing_mul(*k).0))
         .fold(0, |acc, (a, b)| acc + (a as usize + b as usize)) % self.modulo
     }
 }
 
-fn generate_hash(keys: Vec<String>) -> Hash {
+
+#[pyfunction]
+fn generate_hasher(keys: Vec<String>) -> Hash {
 
     let nk = keys.len();
     let ng = nk + 1;
@@ -132,8 +135,6 @@ fn generate_hash(keys: Vec<String>) -> Hash {
     let max_size = keys.iter().map(|x| x.as_bytes().len()).fold(usize::MAX, |acc, a| a.min(acc));
 
     let (vertices, f1, f2) = loop {
-
-
         let mut graph = Graph::new(ng);
         let f1 = BaseHash::new(ng, max_size);
         let f2 = BaseHash::new(ng, max_size);
@@ -162,11 +163,13 @@ fn hello_from_bin() -> String {
     "Hello from perfect-hash!".to_string()
 }
 
+
 /// A Python module implemented in Rust. The name of this function must match
 /// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
 /// import the module.
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hello_from_bin, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_hasher, m)?)?;
     Ok(())
 }
