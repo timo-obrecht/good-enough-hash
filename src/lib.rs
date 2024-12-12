@@ -3,10 +3,12 @@ use pyo3::prelude::*;
 
 use rand::thread_rng;
 use rand::Rng;
+use std::collections::HashMap;
 
 struct Graph {
     n: usize,
-    vertex_values: Vec<Option<usize>>
+    vertex_values: Vec<Option<usize>>,
+    adjacent: HashMap<usize, Vec<(usize, usize)>>
 }
 
 impl Graph {
@@ -15,19 +17,58 @@ impl Graph {
         assert!(n > 1);
         Graph {
             n,
-            vertex_values: vec![None; n-1]
+            vertex_values: vec![None; n-1],
+            adjacent: HashMap::new()
         }
     }
 
-    fn connect(&mut self, a: usize, b: usize, target: usize) {
 
+    fn connect(&mut self, vertex1: usize, vertex2: usize, edge_value: usize) {
+        self.adjacent.entry(vertex1).or_insert_with(Vec::new).push((vertex2, edge_value));
+        self.adjacent.entry(vertex2).or_insert_with(Vec::new).push((vertex1, edge_value));
     }
 
-    fn assign_vertex_values(&self) -> bool {
+    fn assign_vertex_values(&mut self) -> bool {
+        self.vertex_values = vec![None; self.n];
+        let mut visited = vec![false; self.n];
+
+        for root in 0..self.n {
+            if visited[root] {
+                continue;
+            }
+
+            self.vertex_values[root] = Some(0);
+            let mut tovisit = vec![(None, root)];
+
+            while let Some((parent, vertex)) = tovisit.pop() {
+                visited[vertex] = true;
+
+                let mut skip = true;
+                for &(neighbor, edge_value) in &self.adjacent[&vertex] {
+                    if skip && Some(neighbor) == parent {
+                        skip = false;
+                        continue;
+                    }
+
+                    if visited[neighbor] {
+                        return false;
+                    }
+
+                    tovisit.push((Some(vertex), neighbor));
+                    self.vertex_values[neighbor] = Some((edge_value + self.n - self.vertex_values[vertex].unwrap()) % self.n);
+                }
+            }
+        }
+
+        for value in &self.vertex_values {
+            if value.is_none() {
+                return false;
+            }
+        }
         true
     }
-
 }
+
 
 struct BaseHash {
     modulo: usize,
