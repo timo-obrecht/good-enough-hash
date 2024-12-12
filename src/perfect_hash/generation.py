@@ -5,11 +5,17 @@ from perfect_hash._core import generate_hasher
 
 class Hash:
 
+    # make this thing picklable
+    # https://docs.python.org/3/library/pickle.html#what-can-be-pickled-and-unpickled
+
     def __init__(self, hasher):
         self._hasher = hasher
 
     def __call__(self, *args, **kwds):
         return self._hasher.call(args[0])
+    
+    def __getitem__(self, item: str) -> int:
+        return self._hasher[item]
 
 
 def generate_hash(

@@ -16,3 +16,9 @@ def test_creation():
     assert hash("ensemble") == 3
     assert hash("de") == 4
     assert hash("clés") == 5
+
+
+def test_values():
+    h = generate_hash(keys)
+    for k, v in enumerate(keys):
+        assert h[v] == k
