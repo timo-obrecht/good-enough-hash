@@ -11,8 +11,8 @@ class Hash:
     def __init__(self, hasher):
         self._hasher = hasher
 
-    def __call__(self, *args, **kwds):
-        return self._hasher.call(args[0])
+    def __call__(self, item: str):
+        return self._hasher.call(item)
     
     def __getitem__(self, item: str) -> int:
         return self._hasher.call(item)
@@ -20,13 +20,13 @@ class Hash:
 
 
 def generate_hash(
-        keys: list[str] | set[str],
-        order: Optional[list[int]] = None,
+        keys: list[str] | tuple[str],
+        values: Optional[list[int]] = None,
         ) -> Callable[[str], int]:
     """Generate a perfect hash function for a set of keys.
 
     Args:
-        keys: A list or set of strings to hash.
+        keys: A list or tuple of strings to hash.
 
     Returns:
         A function that hashes a string to an integer.
@@ -40,12 +40,15 @@ def generate_hash(
     if len(keys) != len(set(keys)):
         raise ValueError("All keys must be unique.")
 
-    if order:
-        assert set(order) == set(range(len(keys)))
-        _keys = [keys[i] for i in order]
+    _keys = list(keys)
+
+    if values:
+        s = set(values)
+        assert len(values) == len(s)
+        values = list(values)
     else:
-        _keys = list(keys)
+        values = list(range(len(_keys)))
 
     # Generate the perfect hash function.
-    h = generate_hasher(_keys)
+    h = generate_hasher(_keys, values)
     return Hash(h)

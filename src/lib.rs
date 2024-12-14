@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use pyo3::ffi::PyErr_CheckSignals;
 
 
-
 #[macro_export]
 #[cfg(not(test))]
 macro_rules! python_interupt {
@@ -18,25 +17,11 @@ macro_rules! python_interupt {
     };
 }
 
-
 #[macro_export]
 #[cfg(test)]
 macro_rules! python_interupt {
     ($n_iter: expr, $period: expr) => {};
 }
-
-
-
-
-
-// #[pyclass]
-// struct Hash {
-//     ng: usize,
-//     right_bytes: Vec<u8>,
-//     left_bytes: Vec<u8>,
-//     indices: Vec<usize>
-// }
-
 
 // #[pymethods]
 // impl Hash {
@@ -53,63 +38,15 @@ macro_rules! python_interupt {
 //     }
 // }
 
-
-// #[pyfunction]
-// fn generate_hasher(keys: Vec<String>) -> Hash {
-//     // read the algorithm description here
-//     // http://ilan.schnell-web.net/prog/perfect-hash/algo.html
-
-//     let mut ng: usize = keys.len() + 1;
-//     let mut iter: usize = 0;
-//     let mut max_iter: usize = 32;
-
-//     let max_size = keys.iter().map(|x| x.as_bytes().len()).fold(usize::MIN, |acc, a| a.max(acc));
-
-
-//     let (vertices, f1, f2) = loop {
-//         iter += 1;
-//         if iter > max_iter {
-//             ng = ng + ng/4 + 1;
-//             max_iter *= 2;
-//         }
-
-//         python_interupt!(iter, 8);
-
-//         let mut graph = Graph::new(ng);
-//         let f1 = BaseHash::new(ng, max_size);
-//         let f2 = BaseHash::new(ng, max_size);
-
-//         for (index, key) in keys.iter().enumerate() {
-//             graph.connect(f1.call(key), f2.call(key), index);
-//         }
-
-//         if graph.assign_vertex_values() {
-//             let vertices: Vec<usize> = graph.vertex_values.into_iter().map(|x| x.unwrap_or_default()).collect();
-//             break (vertices, f1, f2);
-//         }
-//     };
-
-//     println!("generated in {} iterations", iter);
-
-//     Hash {
-//         ng: ng,
-//         right_bytes: f1.salt,
-//         left_bytes: f2.salt,
-//         indices: vertices
-//     }
-// }
-
-
-
 struct Graph {
-    n: usize, // Number of vertices
+    ng: usize, // Number of vertices
     adjacent: HashMap<usize, Vec<(usize, usize)>>, // Adjacency list
 }
 
 impl Graph {
-    fn new(n: usize) -> Self {
+    fn new(ng: usize) -> Self {
         Self {
-            n,
+            ng,
             adjacent: HashMap::new(),
         }
     }
@@ -120,10 +57,10 @@ impl Graph {
     }
 
     fn assign_vertex_values(&self) -> Option<Vec<usize>> {
-        let mut vertex_values = vec![None; self.n];
-        let mut visited = vec![false; self.n];
+        let mut vertex_values = vec![None; self.ng];
+        let mut visited = vec![false; self.ng];
 
-        for root in 0..self.n {
+        for root in 0..self.ng {
             if visited[root] {
                 continue;
             }
@@ -147,7 +84,7 @@ impl Graph {
                         stack.push((Some(vertex), neighbor));
 
                         if let Some(value) = vertex_values[vertex] {
-                            vertex_values[neighbor] = Some((edge_value + self.n - value) % self.n);
+                            vertex_values[neighbor] = Some((edge_value + self.ng - value) % self.ng);
                         }
                     }
                 }
@@ -158,34 +95,33 @@ impl Graph {
 }
 
 struct BaseHash {
-    n: usize,
+    ng: usize,
     salt: Vec<usize>,
 }
 
 impl BaseHash {
 
-    fn new(modulo: usize, max_size: usize) -> Self {
+    fn new(ng: usize, max_size: usize) -> Self {
         let mut rng = thread_rng();
         let mut salt = Vec::with_capacity(max_size);
         for _ in 0..max_size {
             let u: usize = rng.gen();
-            salt.push(u % modulo);
+            salt.push(u % (ng - 1) + 1);
         }
         BaseHash { 
-            n: modulo,
-            salt: salt
+            ng,
+            salt
          }
     }
 
     fn hash(&self, key: &str) -> usize {
         key.as_bytes()
             .iter().zip(self.salt.iter())
-            .map(|(a, b)| (*a as usize) *b)
+            .map(|(a, b)| (*a as usize) * b)
             .sum::<usize>()
-            % self.n
+            % self.ng
     }
 }
-
 
 #[pyclass]
 struct Hash {
@@ -198,8 +134,7 @@ struct Hash {
 
 #[pymethods]
 impl Hash {
-
-    fn call(&mut self, key: String) -> usize {
+    fn call(&self, key: String) -> usize {
         let h1 = self.f1.hash(&key);
         let h2 = self.f2.hash(&key);
         (self.indices[h1] + self.indices[h2]) % self.ng
@@ -208,14 +143,16 @@ impl Hash {
 
 
 #[pyfunction]
-fn generate_hasher(keys: Vec<String>) -> Hash {
+fn generate_hasher(keys: Vec<String>, values: Vec<usize>) -> Hash {
+    // read the algorithm description here
+    // http://ilan.schnell-web.net/prog/perfect-hash/algo.html
     let mut trials = 0;
-    let mut ng = keys.len() + 1;
+    let mut ng = keys.len() + 4;
     let max_size = keys.iter().map(|x| x.as_bytes().len()).fold(usize::MIN, |acc, a| a.max(acc));
 
     let (f1, f2, vertex_values) = loop {
         trials += 1;
-        if trials % 8 == 0 { ng = ng + ng/4 + 1; }
+        if trials % 8 == 0 { ng = ng + ng/8 + 1; }
         python_interupt!(trials, 8);
 
         if ng > 100 * (keys.len() + 1) {
@@ -226,10 +163,10 @@ fn generate_hasher(keys: Vec<String>) -> Hash {
         let f1 = BaseHash::new(ng, max_size);
         let f2 = BaseHash::new(ng, max_size);
 
-        for (hashval, key) in keys.iter().enumerate() {
+        for (key, hashval) in keys.iter().zip(values.iter()) {
             let h1 = f1.hash(key);
             let h2 = f2.hash(key);
-            graph.connect(h1, h2, hashval);
+            graph.connect(h1, h2, *hashval);
         }
 
         if let Some(vertex_values) = graph.assign_vertex_values() {
@@ -247,18 +184,8 @@ fn generate_hasher(keys: Vec<String>) -> Hash {
 
 
 
-#[pyfunction]
-fn hello_from_bin() -> String {
-    "Hello from perfect-hash!".to_string()
-}
-
-
-/// A Python module implemented in Rust. The name of this function must match
-/// the `lib.name` setting in the `Cargo.toml`, else Python will not be able to
-/// import the module.
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_function(wrap_pyfunction!(hello_from_bin, m)?)?;
     m.add_function(wrap_pyfunction!(generate_hasher, m)?)?;
     Ok(())
 }
