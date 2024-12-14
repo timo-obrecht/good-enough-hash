@@ -8,124 +8,26 @@ use pyo3::ffi::PyErr_CheckSignals;
 
 
 
-// #[macro_export]
-// // #[cfg(not(test))]
-// macro_rules! python_interupt {
-//     ($n_iter: expr, $period: expr) => {
-//         if $n_iter % $period == 0 {
-//             unsafe {if PyErr_CheckSignals() == -1 {panic!("Keyboard interupt");}}
-//         }
-//     };
-// }
-
-// // #[macro_export]
-// // #[cfg(test)]
-// // macro_rules! python_interupt {
-// //     ($n_iter: expr, $period: expr) => {};
-// // }
+#[macro_export]
+#[cfg(not(test))]
+macro_rules! python_interupt {
+    ($n_iter: expr, $period: expr) => {
+        if $n_iter % $period == 0 {
+            unsafe {if PyErr_CheckSignals() == -1 {panic!("Keyboard interupt");}}
+        }
+    };
+}
 
 
-// struct Graph {
-//     ng: usize,
-//     vertex_values: Vec<Option<usize>>,
-//     adjacent: HashMap<usize, Vec<(usize, usize)>>
-// }
-
-// impl Graph {
-
-//     fn new(n: usize) -> Self {
-//         assert!(n > 1);
-//         Graph {
-//             ng: n,
-//             vertex_values: vec![None; n],
-//             adjacent: HashMap::new()
-//         }
-//     }
+#[macro_export]
+#[cfg(test)]
+macro_rules! python_interupt {
+    ($n_iter: expr, $period: expr) => {};
+}
 
 
-//     fn connect(&mut self, vertex1: usize, vertex2: usize, edge_value: usize) {
-//         // println!("connecting {:?} and {:?}", vertex1, vertex2);
-//         self.adjacent.entry(vertex1).or_insert_with(Vec::new).push((vertex2, edge_value));
-//         self.adjacent.entry(vertex2).or_insert_with(Vec::new).push((vertex1, edge_value));
-//     }
 
 
-//     fn assign_vertex_values(&mut self) -> bool {
-//         self.vertex_values = vec![None; self.ng];
-//         let mut visited = vec![false; self.ng];
-
-//         for root in self.adjacent.keys() {
-//             if visited[*root] {
-//                 continue;
-//             }
-
-//             self.vertex_values[*root] = Some(42);
-//             let mut tovisit = vec![(None, *root)];
-
-//             while let Some((parent, vertex)) = tovisit.pop() {
-//                 visited[vertex] = true;
-
-//                 let mut skip = true;
-//                 // println!("searching for key {:?}", vertex);
-//                 // println!("adjacent is long : {:?}", self.adjacent.len());
-//                 for &(neighbor, edge_value) in &self.adjacent[&vertex] {
-//                     if skip && Some(neighbor) == parent {
-//                         skip = false;
-//                         continue;
-//                     }
-
-//                     if visited[neighbor] {
-//                         return false;
-//                     }
-
-//                     tovisit.push((Some(vertex), neighbor));
-//                     // +self.ng to avoid negative values with usize
-//                     self.vertex_values[neighbor] = Some((edge_value + self.ng - self.vertex_values[vertex].unwrap()) % self.ng);
-//                 }
-//             }
-//         }
-
-//         // for value in &self.vertex_values {
-//         //     if value.is_none() {
-//         //         return false;
-//         //     }
-//         // }
-//         true
-//     }
-// }
-
-
-// struct BaseHash {
-//     ng: usize,
-//     salt: Vec<u8>
-// }
-
-// impl BaseHash {
-
-//     fn new(modulo: usize, max_size: usize) -> Self {
-//         let mut rng = thread_rng();
-//         let mut salt = Vec::with_capacity(max_size);
-//         for _ in 0..max_size {
-//             let u: u8 = rng.gen();
-//             salt.push(u);
-//         }
-//         BaseHash { 
-//             ng: modulo,
-//             salt
-//          }
-//     }
-
-
-//     fn call(&self, key: &String) -> usize {
-//         let bytes = key.as_bytes();
-//         assert!(self.salt.len() >= bytes.len());
-
-//         self.salt.iter()
-//         .zip(bytes)
-//         .fold(0, |acc, (a, b)| acc + (a.overflowing_mul(*b).0 as usize)) % self.ng
-//     }
-
-// }
 
 // #[pyclass]
 // struct Hash {
@@ -199,7 +101,6 @@ use pyo3::ffi::PyErr_CheckSignals;
 
 
 
-#[derive(Debug)]
 struct Graph {
     n: usize, // Number of vertices
     adjacent: HashMap<usize, Vec<(usize, usize)>>, // Adjacency list
@@ -256,24 +157,30 @@ impl Graph {
     }
 }
 
-struct IntSaltHash {
+struct BaseHash {
     n: usize,
     salt: Vec<usize>,
 }
 
-impl IntSaltHash {
-    fn new(n: usize) -> Self {
-        Self { n, salt: Vec::new() }
+impl BaseHash {
+
+    fn new(modulo: usize, max_size: usize) -> Self {
+        let mut rng = thread_rng();
+        let mut salt = Vec::with_capacity(max_size);
+        for _ in 0..max_size {
+            let u: usize = rng.gen();
+            salt.push(u % modulo);
+        }
+        BaseHash { 
+            n: modulo,
+            salt: salt
+         }
     }
 
-    fn hash(&mut self, key: &str) -> usize {
-        while self.salt.len() < key.len() {
-            self.salt.push(rand::thread_rng().gen_range(1..self.n));
-        }
-
-        key.chars()
-            .enumerate()
-            .map(|(i, c)| self.salt[i] * (c as usize))
+    fn hash(&self, key: &str) -> usize {
+        key.as_bytes()
+            .iter().zip(self.salt.iter())
+            .map(|(a, b)| (*a as usize) *b)
             .sum::<usize>()
             % self.n
     }
@@ -283,8 +190,8 @@ impl IntSaltHash {
 #[pyclass]
 struct Hash {
     ng: usize,
-    f1: IntSaltHash,
-    f2: IntSaltHash,
+    f1: BaseHash,
+    f2: BaseHash,
     indices: Vec<usize>
 }
 
@@ -304,20 +211,20 @@ impl Hash {
 fn generate_hasher(keys: Vec<String>) -> Hash {
     let mut trials = 0;
     let mut ng = keys.len() + 1;
+    let max_size = keys.iter().map(|x| x.as_bytes().len()).fold(usize::MIN, |acc, a| a.max(acc));
 
     let (f1, f2, vertex_values) = loop {
-        if trials % 5 == 0 && trials > 0 {
-            ng = usize::max(ng + 1, (1.05 * ng as f64) as usize);
-        }
         trials += 1;
+        if trials % 8 == 0 { ng = ng + ng/4 + 1; }
+        python_interupt!(trials, 8);
 
         if ng > 100 * (keys.len() + 1) {
             panic!("Too many iterations");
         }
 
         let mut graph = Graph::new(ng);
-        let mut f1 = IntSaltHash::new(ng);
-        let mut f2 = IntSaltHash::new(ng);
+        let f1 = BaseHash::new(ng, max_size);
+        let f2 = BaseHash::new(ng, max_size);
 
         for (hashval, key) in keys.iter().enumerate() {
             let h1 = f1.hash(key);

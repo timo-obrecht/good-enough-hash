@@ -15,7 +15,8 @@ class Hash:
         return self._hasher.call(args[0])
     
     def __getitem__(self, item: str) -> int:
-        return self._hasher[item]
+        return self._hasher.call(item)
+
 
 
 def generate_hash(
