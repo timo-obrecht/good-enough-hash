@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 
-use rand::thread_rng;
 use rand::Rng;
+use core::panic;
 use std::collections::HashMap;
 
 use pyo3::ffi::PyErr_CheckSignals;
@@ -23,29 +23,17 @@ macro_rules! python_interupt {
     ($n_iter: expr, $period: expr) => {};
 }
 
-// #[pymethods]
-// impl Hash {
-
-//     fn call(&self, key: String) -> usize {
-//         let bytes = key.as_bytes();
-
-//         // vertices[f1.call(key)] + vertices[f2.call(key)] % ng
-//         let (a, b) = bytes.iter().zip(self.right_bytes.iter()).zip(self.left_bytes.iter())
-//         .map(|((k, a), b) | (a.overflowing_mul(*k).0, b.overflowing_mul(*k).0))
-//         .fold((0, 0), |(x, y), (a, b)| ((x + a as usize), (y + b as usize)));
-
-//         (self.indices[a % self.ng] + self.indices[b % self.ng]) % self.ng
-//     }
-// }
 
 struct Graph {
+    nkeys: usize,
     ng: usize, // Number of vertices
     adjacent: HashMap<usize, Vec<(usize, usize)>>, // Adjacency list
 }
 
 impl Graph {
-    fn new(ng: usize) -> Self {
+    fn new(ng: usize, nkeys: usize) -> Self {
         Self {
+            nkeys,
             ng,
             adjacent: HashMap::new(),
         }
@@ -60,6 +48,10 @@ impl Graph {
         let mut vertex_values = vec![None; self.ng];
         let mut visited = vec![false; self.ng];
 
+        if self.adjacent.len() <= self.nkeys {
+            return None;
+        }
+
         for root in 0..self.ng {
             if visited[root] {
                 continue;
@@ -71,9 +63,11 @@ impl Graph {
             while let Some((parent, vertex)) = stack.pop() {
                 visited[vertex] = true;
 
+                let mut skip = true; // important to detect if f1(a) = f2(b) & f1(b) = f2(a)
                 if let Some(neighbors) = self.adjacent.get(&vertex) {
                     for &(neighbor, edge_value) in neighbors {
-                        if Some(neighbor) == parent {
+                        if skip && Some(neighbor) == parent {
+                            skip = false;
                             continue;
                         }
 
@@ -94,6 +88,7 @@ impl Graph {
     }
 }
 
+
 struct BaseHash {
     ng: usize,
     salt: Vec<usize>,
@@ -102,11 +97,9 @@ struct BaseHash {
 impl BaseHash {
 
     fn new(ng: usize, max_size: usize) -> Self {
-        let mut rng = thread_rng();
         let mut salt = Vec::with_capacity(max_size);
         for _ in 0..max_size {
-            let u: usize = rng.gen();
-            salt.push(u % (ng - 1) + 1);
+            salt.push(rand::thread_rng().gen_range(0..ng));
         }
         BaseHash { 
             ng,
@@ -117,7 +110,7 @@ impl BaseHash {
     fn hash(&self, key: &str) -> usize {
         key.as_bytes()
             .iter().zip(self.salt.iter())
-            .map(|(a, b)| (*a as usize) * b)
+            .map(|(a, b)| (*a as usize).overflowing_mul(*b).0)
             .sum::<usize>()
             % self.ng
     }
@@ -134,11 +127,25 @@ struct Hash {
 
 #[pymethods]
 impl Hash {
-    fn call(&self, key: String) -> usize {
-        let h1 = self.f1.hash(&key);
-        let h2 = self.f2.hash(&key);
-        (self.indices[h1] + self.indices[h2]) % self.ng
-    }
+    // fn call(&self, key: String) -> usize {
+    //     let h1 = self.f1.hash(&key);
+    //     let h2 = self.f2.hash(&key);
+    //     (self.indices[h1] + self.indices[h2]) % self.ng
+    // }
+
+    // check if one is faster than the other
+    // fn call(&self, key: String) -> usize {
+    //     let bytes = key.as_bytes();
+    //     let right_bytes = &self.f1.salt;
+    //     let left_bytes = &self.f2.salt;
+
+    //     let (a, b) = bytes.iter().zip(right_bytes.iter()).zip(left_bytes.iter())
+    //     .map(|((k, a), b) | ((*k as usize) * a, (*k as usize)* b))
+    //     .fold((0, 0), |(x, y), (a, b)| ((x + a), (y + b)));
+
+    //     (self.indices[a % self.ng] + self.indices[b % self.ng]) % self.ng
+    // }
+
 }
 
 
@@ -147,7 +154,7 @@ fn generate_hasher(keys: Vec<String>, values: Vec<usize>) -> Hash {
     // read the algorithm description here
     // http://ilan.schnell-web.net/prog/perfect-hash/algo.html
     let mut trials = 0;
-    let mut ng = keys.len() + 4;
+    let mut ng = keys.len() + 1;
     let max_size = keys.iter().map(|x| x.as_bytes().len()).fold(usize::MIN, |acc, a| a.max(acc));
 
     let (f1, f2, vertex_values) = loop {
@@ -159,7 +166,7 @@ fn generate_hasher(keys: Vec<String>, values: Vec<usize>) -> Hash {
             panic!("Too many iterations");
         }
 
-        let mut graph = Graph::new(ng);
+        let mut graph = Graph::new(ng, keys.len());
         let f1 = BaseHash::new(ng, max_size);
         let f2 = BaseHash::new(ng, max_size);
 

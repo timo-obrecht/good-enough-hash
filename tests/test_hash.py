@@ -20,6 +20,14 @@ def test_values():
             assert h[v] == k
 
 
+# def test_custom_values():
+#     values = [3*k + 9 for k in range(len(keys))]
+#     for _ in range(32):
+#         h = generate_hash(keys, values=values)
+#         for k, v in zip(keys, values):
+#             assert h[k] == v
+
+
 def test_many():
     for _ in range(4):
         h = generate_hash(many_keys)
