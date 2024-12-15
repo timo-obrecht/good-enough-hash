@@ -1,6 +1,6 @@
 from typing import Callable, Optional
 
-from perfect_hash._core import generate_hasher
+from perfect_hash._core import generate_hasher, from_args
 
 
 class Hash:
@@ -18,8 +18,19 @@ class Hash:
         return self._hasher.call(item)
 
 
+    # those methods are to make the object pickable
+    def __getstate__(self):
+        state = self._hasher.dump()
+        keywords = ('ng', 'f1', 'f2', 'indices')
+        return {k : s for k, s in zip(keywords, state)}
+
+
+    def __setstate__(self, state):
+        self._hasher = from_args(state['ng'], state['f1'], state['f2'], state['indices'])
+
 
 def generate_hash(
+    
         keys: list[str] | tuple[str],
         values: Optional[list[int]] = None,
         ) -> Callable[[str], int]:

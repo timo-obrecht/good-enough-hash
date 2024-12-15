@@ -1,11 +1,16 @@
-use pyo3::prelude::*;
+#![feature(portable_simd)]
 
+use pyo3::prelude::*;
+use pyo3::types::{PyString, PyList} ;
 use rand::Rng;
-use core::panic;
 use std::collections::HashMap;
+
+use std::simd::num::SimdUint;
+use std::simd::Simd;
 
 use pyo3::ffi::PyErr_CheckSignals;
 
+const CHUNK_SIZE: usize = 8;
 
 #[macro_export]
 #[cfg(not(test))]
@@ -101,22 +106,49 @@ impl BaseHash {
         for _ in 0..max_size {
             salt.push(rand::thread_rng().gen_range(0..ng));
         }
+        while salt.len() % CHUNK_SIZE != 0 {
+            salt.push(0);
+        }
         BaseHash { 
             ng,
             salt
          }
     }
 
-    fn hash(&self, key: &str) -> usize {
-        key.as_bytes()
-            .iter().zip(self.salt.iter())
-            .map(|(a, b)| (*a as usize).overflowing_mul(*b).0)
-            .sum::<usize>()
-            % self.ng
+    // fn hash(&self, key: &str) -> usize {
+    //     let mut hash: usize = 0;
+    //     for (i, &byte) in key.as_bytes().iter().enumerate() {
+    //         hash = hash.wrapping_add(byte as usize * self.salt[i]);
+    //     }
+    //     hash % self.ng
+    // }
+
+    // #[inline(always)]
+    // fn hash(&self, key: &[u8]) -> usize {
+    //     key.iter().zip(self.salt.iter())
+    //         .map(|(a, b)| (*a as usize).overflowing_mul(*b).0)
+    //         .sum::<usize>()
+    //         % self.ng
+    // }
+
+    #[inline(always)]
+    fn hash(&self, key: &[u8]) -> usize {
+        // Convert key bytes and salt to slices
+        let key_bytes = key.chunks(CHUNK_SIZE);
+        let salt = self.salt.chunks_exact(CHUNK_SIZE);
+
+        let hash = key_bytes.zip(salt).fold(0usize, |acc, (a, b)| {
+            let a: Simd<usize, CHUNK_SIZE> = Simd::load_or_default(a).cast();
+            let b = Simd::from_slice(b);
+            let result = a * b;
+            acc.wrapping_add(result.reduce_sum())
+        });
+        hash % self.ng
     }
+
 }
 
-#[pyclass]
+#[pyclass(unsendable, name="Hash")]
 struct Hash {
     ng: usize,
     f1: BaseHash,
@@ -127,19 +159,38 @@ struct Hash {
 
 #[pymethods]
 impl Hash {
-    // fn call(&self, key: String) -> usize {
-    //     let h1 = self.f1.hash(&key);
-    //     let h2 = self.f2.hash(&key);
-    //     (self.indices[h1] + self.indices[h2]) % self.ng
-    // }
+
+    fn dump(&self) -> (usize, Vec<usize>,Vec<usize>, Vec<usize>) {
+        (self.ng, self.f1.salt.clone(), self.f2.salt.clone(), self.indices.clone())
+    }
+
+
+    #[inline(always)]
+    fn hash(&self, key: &str) -> usize {
+        let h1 = self.f1.hash(key.as_bytes());
+        let h2 = self.f2.hash(key.as_bytes());
+        let combined_index = self.indices[h1].wrapping_add(self.indices[h2]);
+        combined_index % self.ng
+    }
+
+
+    #[inline(always)]
+    #[pyo3(signature = (key))]
+    fn call(&self, key: Bound<'_, PyString>) -> usize {
+        let data = unsafe { key.data().unwrap() };
+        let h1 = self.f1.hash(data.as_bytes());
+        let h2 = self.f2.hash(data.as_bytes());
+        let combined_index = self.indices[h1].wrapping_add(self.indices[h2]);
+        combined_index % self.ng
+    }
 
     // check if one is faster than the other
+
+    // #[inline]
     // fn call(&self, key: String) -> usize {
     //     let bytes = key.as_bytes();
-    //     let right_bytes = &self.f1.salt;
-    //     let left_bytes = &self.f2.salt;
 
-    //     let (a, b) = bytes.iter().zip(right_bytes.iter()).zip(left_bytes.iter())
+    //     let (a, b) = bytes.iter().zip(self.right_bytes.iter()).zip(left_bytes.iter())
     //     .map(|((k, a), b) | ((*k as usize) * a, (*k as usize)* b))
     //     .fold((0, 0), |(x, y), (a, b)| ((x + a), (y + b)));
 
@@ -150,12 +201,23 @@ impl Hash {
 
 
 #[pyfunction]
-fn generate_hasher(keys: Vec<String>, values: Vec<usize>) -> Hash {
+fn generate_hasher(keys: Bound<'_, PyList>, values: Vec<usize>) ->  Result<Hash, PyErr> {
+    let py_list = keys.downcast::<pyo3::types::PyList>()?;
+    let mut keys = Vec::with_capacity(py_list.len());
+
+    // copy the raw bytes of the strings
+    for item in py_list {
+        let py_str = item.downcast::<pyo3::types::PyString>()?;
+        let data = unsafe { py_str.data().unwrap() };
+        let copy = data.as_bytes().to_vec();
+        keys.push(copy);
+    }
+
     // read the algorithm description here
     // http://ilan.schnell-web.net/prog/perfect-hash/algo.html
     let mut trials = 0;
     let mut ng = keys.len() + 1;
-    let max_size = keys.iter().map(|x| x.as_bytes().len()).fold(usize::MIN, |acc, a| a.max(acc));
+    let max_size = keys.iter().map(|x| x.len()).fold(usize::MIN, |acc, a| a.max(acc));
 
     let (f1, f2, vertex_values) = loop {
         trials += 1;
@@ -181,18 +243,33 @@ fn generate_hasher(keys: Vec<String>, values: Vec<usize>) -> Hash {
         }
     };
 
-    Hash {
+    Ok(Hash {
         ng,
         f1: f1,
         f2: f2,
         indices: vertex_values,
-    }
+    })
 }
 
+
+#[pyfunction]
+fn from_args(ng: usize, f1: Vec<usize>, f2: Vec<usize>, indices: Vec<usize>) -> Hash {
+
+    let f1 = BaseHash { ng: ng, salt: f1 };
+    let f2 = BaseHash { ng: ng, salt: f2 };
+    
+    Hash {
+        ng,
+        f1: f1,
+        f2: f2,
+        indices: indices,
+    }
+}
 
 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_hasher, m)?)?;
+    m.add_function(wrap_pyfunction!(from_args, m)?)?;
     Ok(())
 }
