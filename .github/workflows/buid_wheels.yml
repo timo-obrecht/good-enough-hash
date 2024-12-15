@@ -31,7 +31,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          rust-toolchain: nightly-2023-03-09
+          rust-toolchain: nightly-2024-08-19
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
           sccache: 'true'
@@ -56,7 +56,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          rust-toolchain: nightly-2023-03-09
+          rust-toolchain: nightly-2024-08-19
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
           sccache: 'true'
@@ -79,7 +79,7 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          rust-toolchain: nightly-2023-03-09
+          rust-toolchain: nightly-2024-08-19
           target: ${{ matrix.target }}
           args: --release --out dist --find-interpreter
           sccache: 'true'

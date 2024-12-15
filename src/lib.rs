@@ -30,7 +30,7 @@ macro_rules! python_interupt {
 
 
 struct Graph {
-    nkeys: usize,
+    n: usize,
     ng: usize, // Number of vertices
     adjacent: HashMap<usize, Vec<(usize, usize)>>, // Adjacency list
 }
@@ -38,7 +38,7 @@ struct Graph {
 impl Graph {
     fn new(ng: usize, nkeys: usize) -> Self {
         Self {
-            nkeys,
+            n: nkeys,
             ng,
             adjacent: HashMap::new(),
         }
@@ -53,7 +53,8 @@ impl Graph {
         let mut vertex_values = vec![None; self.ng];
         let mut visited = vec![false; self.ng];
 
-        if self.adjacent.len() <= self.nkeys {
+        if self.adjacent.len() <= self.n {
+            // println!("only {} nodes", self.adjacent.len());
             return None;
         }
 
@@ -96,7 +97,7 @@ impl Graph {
 
 struct BaseHash {
     ng: usize,
-    salt: Vec<usize>,
+    salt: Vec<u8>,
 }
 
 impl BaseHash {
@@ -104,7 +105,9 @@ impl BaseHash {
     fn new(ng: usize, max_size: usize) -> Self {
         let mut salt = Vec::with_capacity(max_size);
         for _ in 0..max_size {
-            salt.push(rand::thread_rng().gen_range(0..ng));
+            // salt.push(rand::thread_rng().gen_range(0..ng));
+            let u: u8 = rand::thread_rng().gen();
+            salt.push(u);
         }
         while salt.len() % CHUNK_SIZE != 0 {
             salt.push(0);
@@ -131,19 +134,31 @@ impl BaseHash {
     //         % self.ng
     // }
 
+    // #[inline]
+    // fn hash(&self, key: &[u8]) -> usize {
+    //     key.iter().zip(self.salt.iter())
+    //         .map(|(a, b)| (*a as usize).overflowing_mul(*b as usize).0)
+    //         .sum::<usize>()
+    //         & (self.ng - 1)
+    //         // % self.ng
+    // }
+
     #[inline]
     fn hash(&self, key: &[u8]) -> usize {
-        // Convert key bytes and salt to slices
         let key_bytes = key.chunks(CHUNK_SIZE);
         let salt = self.salt.chunks_exact(CHUNK_SIZE);
 
-        let hash = key_bytes.zip(salt).fold(0usize, |acc, (a, b)| {
-            let a: Simd<usize, CHUNK_SIZE> = Simd::load_or_default(a).cast();
+        let init: Simd<u8, CHUNK_SIZE> = Simd::from_array([1, 2, 3, 4, 5, 6, 7, 0]);
+        let hash = key_bytes.zip(salt).fold(init, |acc, (a, b)| {
+            let a: Simd<u8, CHUNK_SIZE> = Simd::load_or_default(a);
             let b = Simd::from_slice(b);
-            let result = a * b; // overflow is the default behavior with SIMD
-            acc.wrapping_add(result.reduce_sum())
+            // acc ^ (a * b) // overflow is the default behavior with SIMD
+            acc ^ (a * b) // overflow is the default behavior with SIMD
+            // acc.wrapping_add(result.reduce_sum())
         });
-        hash % self.ng
+        let h: usize = unsafe { std::mem::transmute(hash) };
+        h % self.ng
+        // h & (self.ng - 1)
     }
 
 }
@@ -160,7 +175,7 @@ struct Hash {
 #[pymethods]
 impl Hash {
 
-    fn dump(&self) -> (usize, Vec<usize>,Vec<usize>, Vec<usize>) {
+    fn dump(&self) -> (usize, Vec<u8>,Vec<u8>, Vec<usize>) {
         (self.ng, self.f1.salt.clone(), self.f2.salt.clone(), self.indices.clone())
     }
 
@@ -170,33 +185,34 @@ impl Hash {
         let h1 = self.f1.hash(key.as_bytes());
         let h2 = self.f2.hash(key.as_bytes());
         let combined_index = self.indices[h1].wrapping_add(self.indices[h2]);
+        // combined_index & (self.ng - 1)
         combined_index % self.ng
     }
 
 
     #[inline]
+    // #[call]
     #[pyo3(signature = (key))]
-    fn call(&self, key: Bound<'_, PyString>) -> usize {
+    fn __call__(&self, key: Bound<'_, PyString>) -> usize {
         let data = unsafe { key.data().unwrap() };
         let h1 = self.f1.hash(data.as_bytes());
         let h2 = self.f2.hash(data.as_bytes());
         let combined_index = self.indices[h1].wrapping_add(self.indices[h2]);
         combined_index % self.ng
+        // assert!((combined_index & (self.ng - 1)) == combined_index % self.ng);
+        // combined_index & (self.ng - 1)
     }
 
-    // check if one is faster than the other
+}
 
-    // #[inline]
-    // fn call(&self, key: String) -> usize {
-    //     let bytes = key.as_bytes();
 
-    //     let (a, b) = bytes.iter().zip(self.right_bytes.iter()).zip(left_bytes.iter())
-    //     .map(|((k, a), b) | ((*k as usize) * a, (*k as usize)* b))
-    //     .fold((0, 0), |(x, y), (a, b)| ((x + a), (y + b)));
-
-    //     (self.indices[a % self.ng] + self.indices[b % self.ng]) % self.ng
-    // }
-
+fn log2_ceil(x: usize) -> u32 {
+    if x <= 1 {
+        return 0; // log2_ceil(0 or 1) is 0
+    }
+    let bits = usize::BITS; // Number of bits in usize (platform-dependent)
+    let floor_log2 = bits - x.leading_zeros() - 1;
+    floor_log2 + 1
 }
 
 
@@ -216,29 +232,43 @@ fn generate_hasher(keys: Bound<'_, PyList>, values: Vec<usize>) ->  Result<Hash,
     // read the algorithm description here
     // http://ilan.schnell-web.net/prog/perfect-hash/algo.html
     let mut trials = 0;
+    let n = keys.len();
     let mut ng = keys.len() + 1;
+    // let mut ng =  2usize.pow(log2_ceil(n));
+    // if ng - n < n/2 {
+    //     ng = 2 * ng;
+    // }
+    println!("Building a graph with {ng} vertices for a map of {n} elements");
+
     let max_size = keys.iter().map(|x| x.len()).fold(usize::MIN, |acc, a| a.max(acc));
 
     let (f1, f2, vertex_values) = loop {
         trials += 1;
         if trials % 8 == 0 { ng = ng + ng/8 + 1; }
+        // if trials > 128 {
+        //     ng *= 2;
+        //     trials = 0;
+        //     println!("doubling ng");
+        // } else {
+        //     trials += 1;
+        // }
+
         python_interupt!(trials, 8);
 
-        if ng > 100 * (keys.len() + 1) {
-            panic!("Too many iterations");
-        }
-
-        let mut graph = Graph::new(ng, keys.len());
+        let mut graph = Graph::new(ng, n);
         let f1 = BaseHash::new(ng, max_size);
         let f2 = BaseHash::new(ng, max_size);
 
         for (key, hashval) in keys.iter().zip(values.iter()) {
             let h1 = f1.hash(key);
             let h2 = f2.hash(key);
+            // println!("{h1}, {h2}");
             graph.connect(h1, h2, *hashval);
         }
+        // panic!("");
 
         if let Some(vertex_values) = graph.assign_vertex_values() {
+            println!("found a solution with ng : {ng}");
             break (f1, f2, vertex_values);
         }
     };
@@ -253,7 +283,7 @@ fn generate_hasher(keys: Bound<'_, PyList>, values: Vec<usize>) ->  Result<Hash,
 
 
 #[pyfunction]
-fn from_args(ng: usize, f1: Vec<usize>, f2: Vec<usize>, indices: Vec<usize>) -> Hash {
+fn from_args(ng: usize, f1: Vec<u8>, f2: Vec<u8>, indices: Vec<usize>) -> Hash {
 
     let f1 = BaseHash { ng: ng, salt: f1 };
     let f2 = BaseHash { ng: ng, salt: f2 };

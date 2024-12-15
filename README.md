@@ -6,6 +6,20 @@ Good Enough Hash
 
 *to be written*
 
+
+## Usage
+
+
+```python
+from perfect_hash import generate_hash
+
+keys = ["Lorem", "Ipsum", "dolor", "sit", "amet"]
+
+mapper = generate_hash(keys)
+
+assert mapper["Ipsum"] == 1
+```
+
 ## Build
 
 I need to dive a bit more in `uv`. As of right now I am not convinced it is better than pip, but I admit I am low on the learning curve.
@@ -21,12 +35,12 @@ publish with `uv publish` ? Or use maturin github actions ?
 The idea is to have a hash function that is more memory-efficient and faster than a default python dictionnary.
 
 ```python
-keys = ['abcd' + hex(i) + 'wxyz' for i in range(2048 * 8)]
+keys = ['abcd' + hex(i) + 'wxyz' for i in range(2**22)]
 
 custom_map = generate_hash(keys)
 default_map = {k : v for v, k in enumerate(keys)}
 
-some_keys = random.sample(keys, 1000)
+some_keys = random.sample(keys, 2048)
 
 a = timeit(lambda: [custom_map[key] for key in some_keys], number=10000)
 b = timeit(lambda: [default_map[key] for key in some_keys], number=10000)
@@ -85,6 +99,27 @@ fn hash(&self, key: &[u8]) -> usize {
 }
 ```
 
+## Quick note on scale
+
+```python
+keys = ['abcd' + hex(i) + 'wxyz' for i in range(2**22)]
+# custom_map = generate_hash(keys)
+# with open("tmp", "wb") as file:
+#     pickle.dump(custom_map, file)
+with open("tmp", "rb") as file:
+    custom_map = pickle.load(file)    
+
+default_map = {k : v for v, k in enumerate(keys)}
+some_keys = random.sample(keys, 4096)
+a = timeit(lambda: [custom_map[key] for key in some_keys], number=10000)
+b = timeit(lambda: [default_map[key] for key in some_keys], number=10000)
+
+print(f"perfect hash : {a}") # 10.3s
+print(f"default hash : {b}") # 4.7s
+```
+
+It seems the performance difference decrease as the map size increase. With a map of 4M elements, the custom hash is only twice as slow. This would suggest for very large datasets, if you have compute to spare at startup, it could be worth it to use a perfect hash. This also mean I will have to graph the performance difference with regard to data size.
+
 ## Ideas for the future
 
 I also realized several things. First, I don't have to use the same hash function as [Ilan](http://ilan.schnell-web.net/prog/perfect-hash/algo.html), and I can use much faster XOR instead of multiplications. Also, I can interpret eight `u8` as a `u64`, so I don't need to cast every byte to a `usize`. Maybe I can also tweak the choice of the graph size to get rid of the modulo operation.
@@ -98,3 +133,9 @@ As of right now : never. Just use a regular python dictionary.
 On the memory consumption side, if you are dealing with millions of strings, there may be an advantage, but I am more than sceptikal (and I haven't measure anything yet)
 
 The purpose of this project if to implement this algorithm I find very clever (I also need to tune the graph size selection to minimize the runtime expectancy), and to learn how to optimise low-level code (just add `--release`, dumbass).
+
+
+## TODO
+
+- Make the hash generation parralel with rayon
+- Find a way to benchmark all hashing functions one to another in a single run

@@ -12,10 +12,10 @@ class Hash:
         self._hasher = hasher
 
     def __call__(self, item: str):
-        return self._hasher.call(item)
+        return self._hasher(item)
     
     def __getitem__(self, item: str) -> int:
-        return self._hasher.call(item)
+        return self._hasher(item)
 
 
     # those methods are to make the object pickable
