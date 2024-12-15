@@ -131,7 +131,7 @@ impl BaseHash {
     //         % self.ng
     // }
 
-    #[inline(always)]
+    #[inline]
     fn hash(&self, key: &[u8]) -> usize {
         // Convert key bytes and salt to slices
         let key_bytes = key.chunks(CHUNK_SIZE);
@@ -140,7 +140,7 @@ impl BaseHash {
         let hash = key_bytes.zip(salt).fold(0usize, |acc, (a, b)| {
             let a: Simd<usize, CHUNK_SIZE> = Simd::load_or_default(a).cast();
             let b = Simd::from_slice(b);
-            let result = a * b;
+            let result = a * b; // overflow is the default behavior with SIMD
             acc.wrapping_add(result.reduce_sum())
         });
         hash % self.ng
@@ -174,7 +174,7 @@ impl Hash {
     }
 
 
-    #[inline(always)]
+    #[inline]
     #[pyo3(signature = (key))]
     fn call(&self, key: Bound<'_, PyString>) -> usize {
         let data = unsafe { key.data().unwrap() };
@@ -257,7 +257,7 @@ fn from_args(ng: usize, f1: Vec<usize>, f2: Vec<usize>, indices: Vec<usize>) -> 
 
     let f1 = BaseHash { ng: ng, salt: f1 };
     let f2 = BaseHash { ng: ng, salt: f2 };
-    
+
     Hash {
         ng,
         f1: f1,
