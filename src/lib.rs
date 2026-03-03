@@ -2,10 +2,8 @@
 
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyList} ;
-use rand::Rng;
 use std::collections::HashMap;
 
-use std::simd::num::SimdUint;
 use std::simd::Simd;
 
 use pyo3::ffi::PyErr_CheckSignals;
@@ -106,7 +104,7 @@ impl BaseHash {
         let mut salt = Vec::with_capacity(max_size);
         for _ in 0..max_size {
             // salt.push(rand::thread_rng().gen_range(0..ng));
-            let u: u8 = rand::thread_rng().gen();
+            let u: u8 = rand::random();
             salt.push(u);
         }
         while salt.len() % CHUNK_SIZE != 0 {
@@ -218,12 +216,12 @@ fn log2_ceil(x: usize) -> u32 {
 
 #[pyfunction]
 fn generate_hasher(keys: Bound<'_, PyList>, values: Vec<usize>) ->  Result<Hash, PyErr> {
-    let py_list = keys.downcast::<pyo3::types::PyList>()?;
+    let py_list = keys.cast::<pyo3::types::PyList>()?;
     let mut keys = Vec::with_capacity(py_list.len());
 
     // copy the raw bytes of the strings
     for item in py_list {
-        let py_str = item.downcast::<pyo3::types::PyString>()?;
+        let py_str = item.cast::<pyo3::types::PyString>()?;
         let data = unsafe { py_str.data().unwrap() };
         let copy = data.as_bytes().to_vec();
         keys.push(copy);
