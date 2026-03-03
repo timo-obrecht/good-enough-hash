@@ -1,21 +1,20 @@
-#![feature(portable_simd)]
-
-use pyo3::prelude::*;
-use pyo3::types::{PyString, PyList} ;
-use std::collections::HashMap;
-
-use std::simd::Simd;
-
+use pyo3::exceptions::{PyKeyError, PyValueError};
 use pyo3::ffi::PyErr_CheckSignals;
-
-const CHUNK_SIZE: usize = 8;
+use pyo3::prelude::*;
+use pyo3::types::{PyList, PyString};
+use std::collections::HashMap;
+use std::ptr;
 
 #[macro_export]
 #[cfg(not(test))]
 macro_rules! python_interupt {
     ($n_iter: expr, $period: expr) => {
         if $n_iter % $period == 0 {
-            unsafe {if PyErr_CheckSignals() == -1 {panic!("Keyboard interupt");}}
+            unsafe {
+                if PyErr_CheckSignals() == -1 {
+                    panic!("Keyboard interupt");
+                }
+            }
         }
     };
 }
@@ -26,11 +25,50 @@ macro_rules! python_interupt {
     ($n_iter: expr, $period: expr) => {};
 }
 
+#[inline(always)]
+fn mix64(mut x: u64) -> u64 {
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xbf58476d1ce4e5b9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94d049bb133111eb);
+    x ^ (x >> 31)
+}
+
+#[inline(always)]
+fn hash_summary(key: &[u8], seed1: u64, seed2: u64, ng: usize) -> (usize, usize, u8) {
+    let mut h1 = seed1 ^ ((key.len() as u64).wrapping_mul(0x9e3779b185ebca87));
+    let mut h2 = seed2 ^ ((key.len() as u64).wrapping_mul(0xc2b2ae3d27d4eb4f));
+
+    let mut index = 0usize;
+    while index + 8 <= key.len() {
+        let word = unsafe { ptr::read_unaligned(key.as_ptr().add(index) as *const u64) };
+        h1 = mix64(h1 ^ word);
+        h2 = mix64(h2.wrapping_add(word.rotate_left(17)));
+        index += 8;
+    }
+
+    if index < key.len() {
+        let mut word = 0u64;
+        for (shift, byte) in key[index..].iter().enumerate() {
+            word |= (*byte as u64) << (shift * 8);
+        }
+        h1 = mix64(h1 ^ word ^ 0x517cc1b727220a95);
+        h2 = mix64(h2.wrapping_add(word ^ 0x6c8e9cf570932bd5));
+    }
+
+    let mixed1 = mix64(h1);
+    let mixed2 = mix64(h2 ^ h1.rotate_left(32));
+    let tag = (mix64(mixed1 ^ mixed2 ^ ((key.len() as u64) << 8)) & 0xff) as u8;
+    let mask = ng - 1;
+    let first = (mixed1 as usize) & mask;
+    let second = (mixed2 as usize) & mask;
+    (first, second, tag)
+}
 
 struct Graph {
     n: usize,
-    ng: usize, // Number of vertices
-    adjacent: HashMap<usize, Vec<(usize, usize)>>, // Adjacency list
+    ng: usize,
+    adjacent: HashMap<usize, Vec<(usize, usize)>>,
 }
 
 impl Graph {
@@ -43,16 +81,22 @@ impl Graph {
     }
 
     fn connect(&mut self, vertex1: usize, vertex2: usize, edge_value: usize) {
-        self.adjacent.entry(vertex1).or_default().push((vertex2, edge_value));
-        self.adjacent.entry(vertex2).or_default().push((vertex1, edge_value));
+        self.adjacent
+            .entry(vertex1)
+            .or_default()
+            .push((vertex2, edge_value));
+        self.adjacent
+            .entry(vertex2)
+            .or_default()
+            .push((vertex1, edge_value));
     }
 
     fn assign_vertex_values(&self) -> Option<Vec<usize>> {
         let mut vertex_values = vec![None; self.ng];
         let mut visited = vec![false; self.ng];
+        let mask = self.ng - 1;
 
         if self.adjacent.len() <= self.n {
-            // println!("only {} nodes", self.adjacent.len());
             return None;
         }
 
@@ -67,7 +111,7 @@ impl Graph {
             while let Some((parent, vertex)) = stack.pop() {
                 visited[vertex] = true;
 
-                let mut skip = true; // important to detect if f1(a) = f2(b) & f1(b) = f2(a)
+                let mut skip = true;
                 if let Some(neighbors) = self.adjacent.get(&vertex) {
                     for &(neighbor, edge_value) in neighbors {
                         if skip && Some(neighbor) == parent {
@@ -76,224 +120,200 @@ impl Graph {
                         }
 
                         if visited[neighbor] {
-                            return None; // Graph is cyclic
+                            return None;
                         }
 
                         stack.push((Some(vertex), neighbor));
 
                         if let Some(value) = vertex_values[vertex] {
-                            vertex_values[neighbor] = Some((edge_value + self.ng - value) % self.ng);
+                            vertex_values[neighbor] = Some(
+                                edge_value.wrapping_add(self.ng).wrapping_sub(value) & mask,
+                            );
                         }
                     }
                 }
             }
         }
-        Some(vertex_values.into_iter().map(|v| v.unwrap()).collect::<Vec<usize>>())
+
+        Some(vertex_values.into_iter().map(|value| value.unwrap()).collect())
     }
 }
 
-
-struct BaseHash {
-    ng: usize,
-    salt: Vec<u8>,
-}
-
-impl BaseHash {
-
-    fn new(ng: usize, max_size: usize) -> Self {
-        let mut salt = Vec::with_capacity(max_size);
-        for _ in 0..max_size {
-            // salt.push(rand::thread_rng().gen_range(0..ng));
-            let u: u8 = rand::random();
-            salt.push(u);
-        }
-        while salt.len() % CHUNK_SIZE != 0 {
-            salt.push(0);
-        }
-        BaseHash { 
-            ng,
-            salt
-         }
-    }
-
-    // fn hash(&self, key: &str) -> usize {
-    //     let mut hash: usize = 0;
-    //     for (i, &byte) in key.as_bytes().iter().enumerate() {
-    //         hash = hash.wrapping_add(byte as usize * self.salt[i]);
-    //     }
-    //     hash % self.ng
-    // }
-
-    // #[inline(always)]
-    // fn hash(&self, key: &[u8]) -> usize {
-    //     key.iter().zip(self.salt.iter())
-    //         .map(|(a, b)| (*a as usize).overflowing_mul(*b).0)
-    //         .sum::<usize>()
-    //         % self.ng
-    // }
-
-    // #[inline]
-    // fn hash(&self, key: &[u8]) -> usize {
-    //     key.iter().zip(self.salt.iter())
-    //         .map(|(a, b)| (*a as usize).overflowing_mul(*b as usize).0)
-    //         .sum::<usize>()
-    //         & (self.ng - 1)
-    //         // % self.ng
-    // }
-
-    #[inline]
-    fn hash(&self, key: &[u8]) -> usize {
-        let key_bytes = key.chunks(CHUNK_SIZE);
-        let salt = self.salt.chunks_exact(CHUNK_SIZE);
-
-        let init: Simd<u8, CHUNK_SIZE> = Simd::from_array([1, 2, 3, 4, 5, 6, 7, 0]);
-        let hash = key_bytes.zip(salt).fold(init, |acc, (a, b)| {
-            let a: Simd<u8, CHUNK_SIZE> = Simd::load_or_default(a);
-            let b = Simd::from_slice(b);
-            // acc ^ (a * b) // overflow is the default behavior with SIMD
-            acc ^ (a * b) // overflow is the default behavior with SIMD
-            // acc.wrapping_add(result.reduce_sum())
-        });
-        let h: usize = unsafe { std::mem::transmute(hash) };
-        h % self.ng
-        // h & (self.ng - 1)
-    }
-
-}
-
-#[pyclass(unsendable, name="Hash")]
+#[pyclass(unsendable, name = "Hash")]
 struct Hash {
     ng: usize,
-    f1: BaseHash,
-    f2: BaseHash,
-    indices: Vec<usize>
+    seed1: u64,
+    seed2: u64,
+    indices: Vec<usize>,
+    values: Vec<usize>,
+    key_tags: Vec<u8>,
+    key_offsets: Vec<u32>,
+    key_data: Vec<u8>,
 }
-
 
 #[pymethods]
 impl Hash {
-
-    fn dump(&self) -> (usize, Vec<u8>,Vec<u8>, Vec<usize>) {
-        (self.ng, self.f1.salt.clone(), self.f2.salt.clone(), self.indices.clone())
+    fn dump(&self) -> (usize, u64, u64, Vec<usize>, Vec<usize>, Vec<u8>, Vec<u32>, Vec<u8>) {
+        (
+            self.ng,
+            self.seed1,
+            self.seed2,
+            self.indices.clone(),
+            self.values.clone(),
+            self.key_tags.clone(),
+            self.key_offsets.clone(),
+            self.key_data.clone(),
+        )
     }
-
 
     #[inline(always)]
-    fn hash(&self, key: &str) -> usize {
-        let h1 = self.f1.hash(key.as_bytes());
-        let h2 = self.f2.hash(key.as_bytes());
-        let combined_index = self.indices[h1].wrapping_add(self.indices[h2]);
-        // combined_index & (self.ng - 1)
-        combined_index % self.ng
+    fn index_and_tag_for(&self, key: &[u8]) -> (usize, u8) {
+        let (h1, h2, tag) = hash_summary(key, self.seed1, self.seed2, self.ng);
+        (
+            self.indices[h1].wrapping_add(self.indices[h2]) & (self.ng - 1),
+            tag,
+        )
     }
 
+    #[inline(always)]
+    fn contains_at_index(&self, index: usize, tag: u8, key: &[u8]) -> bool {
+        if index >= self.values.len() {
+            return false;
+        }
+        if self.key_tags[index] != tag {
+            return false;
+        }
+
+        let start = self.key_offsets[index] as usize;
+        let end = self.key_offsets[index + 1] as usize;
+        &self.key_data[start..end] == key
+    }
 
     #[inline]
-    // #[call]
     #[pyo3(signature = (key))]
-    fn __call__(&self, key: Bound<'_, PyString>) -> usize {
+    fn __call__(&self, key: Bound<'_, PyString>) -> PyResult<usize> {
         let data = unsafe { key.data().unwrap() };
-        let h1 = self.f1.hash(data.as_bytes());
-        let h2 = self.f2.hash(data.as_bytes());
-        let combined_index = self.indices[h1].wrapping_add(self.indices[h2]);
-        combined_index % self.ng
-        // assert!((combined_index & (self.ng - 1)) == combined_index % self.ng);
-        // combined_index & (self.ng - 1)
+        let bytes = data.as_bytes();
+        let (index, tag) = self.index_and_tag_for(bytes);
+
+        if self.contains_at_index(index, tag, bytes) {
+            return Ok(self.values[index]);
+        }
+
+        Err(PyKeyError::new_err(key.extract::<String>()?))
     }
-
 }
-
-
-fn log2_ceil(x: usize) -> u32 {
-    if x <= 1 {
-        return 0; // log2_ceil(0 or 1) is 0
-    }
-    let bits = usize::BITS; // Number of bits in usize (platform-dependent)
-    let floor_log2 = bits - x.leading_zeros() - 1;
-    floor_log2 + 1
-}
-
 
 #[pyfunction]
-fn generate_hasher(keys: Bound<'_, PyList>, values: Vec<usize>) ->  Result<Hash, PyErr> {
-    let py_list = keys.cast::<pyo3::types::PyList>()?;
+fn generate_hasher(keys: Bound<'_, PyList>, values: Vec<usize>) -> Result<Hash, PyErr> {
+    let py_list = keys.cast::<PyList>()?;
     let mut keys = Vec::with_capacity(py_list.len());
 
-    // copy the raw bytes of the strings
     for item in py_list {
-        let py_str = item.cast::<pyo3::types::PyString>()?;
+        let py_str = item.cast::<PyString>()?;
         let data = unsafe { py_str.data().unwrap() };
-        let copy = data.as_bytes().to_vec();
-        keys.push(copy);
+        keys.push(data.as_bytes().to_vec());
     }
 
-    // read the algorithm description here
-    // http://ilan.schnell-web.net/prog/perfect-hash/algo.html
-    let mut trials = 0;
+    if values.len() != keys.len() {
+        return Err(PyValueError::new_err(
+            "values must have the same length as keys",
+        ));
+    }
+
+    if keys.is_empty() {
+        return Ok(Hash {
+            ng: 1,
+            seed1: rand::random(),
+            seed2: rand::random(),
+            indices: vec![0],
+            values,
+            key_tags: Vec::new(),
+            key_offsets: vec![0],
+            key_data: Vec::new(),
+        });
+    }
+
+    let total_key_bytes = keys.iter().map(|key| key.len()).sum::<usize>();
+    if total_key_bytes > u32::MAX as usize {
+        return Err(PyValueError::new_err(
+            "total serialized key size exceeds supported limit",
+        ));
+    }
+
+    let mut key_offsets = Vec::with_capacity(keys.len() + 1);
+    let mut key_data = Vec::with_capacity(total_key_bytes);
+    key_offsets.push(0);
+    for key in &keys {
+        key_data.extend_from_slice(key);
+        key_offsets.push(key_data.len() as u32);
+    }
+
+    let mut trials = 0usize;
     let n = keys.len();
-    let mut ng = keys.len() + 1;
-    // let mut ng =  2usize.pow(log2_ceil(n));
-    // if ng - n < n/2 {
-    //     ng = 2 * ng;
-    // }
-    println!("Building a graph with {ng} vertices for a map of {n} elements");
+    let mut ng = (n + 1).next_power_of_two();
 
-    let max_size = keys.iter().map(|x| x.len()).fold(usize::MIN, |acc, a| a.max(acc));
-
-    let (f1, f2, vertex_values) = loop {
+    let (seed1, seed2, vertex_values, key_tags) = loop {
         trials += 1;
-        if trials % 8 == 0 { ng = ng + ng/8 + 1; }
-        // if trials > 128 {
-        //     ng *= 2;
-        //     trials = 0;
-        //     println!("doubling ng");
-        // } else {
-        //     trials += 1;
-        // }
+        if trials % 8 == 0 {
+            ng *= 2;
+        }
 
         python_interupt!(trials, 8);
 
+        let seed1: u64 = rand::random();
+        let seed2: u64 = rand::random();
         let mut graph = Graph::new(ng, n);
-        let f1 = BaseHash::new(ng, max_size);
-        let f2 = BaseHash::new(ng, max_size);
 
-        for (key, hashval) in keys.iter().zip(values.iter()) {
-            let h1 = f1.hash(key);
-            let h2 = f2.hash(key);
-            // println!("{h1}, {h2}");
-            graph.connect(h1, h2, *hashval);
+        for (key_index, key) in keys.iter().enumerate() {
+            let (h1, h2, _) = hash_summary(key, seed1, seed2, ng);
+            graph.connect(h1, h2, key_index);
         }
-        // panic!("");
 
         if let Some(vertex_values) = graph.assign_vertex_values() {
-            println!("found a solution with ng : {ng}");
-            break (f1, f2, vertex_values);
+            let mut key_tags = vec![0u8; keys.len()];
+            for (key_index, key) in keys.iter().enumerate() {
+                let (_, _, tag) = hash_summary(key, seed1, seed2, ng);
+                key_tags[key_index] = tag;
+            }
+            break (seed1, seed2, vertex_values, key_tags);
         }
     };
 
     Ok(Hash {
         ng,
-        f1: f1,
-        f2: f2,
+        seed1,
+        seed2,
         indices: vertex_values,
+        values,
+        key_tags,
+        key_offsets,
+        key_data,
     })
 }
 
-
 #[pyfunction]
-fn from_args(ng: usize, f1: Vec<u8>, f2: Vec<u8>, indices: Vec<usize>) -> Hash {
-
-    let f1 = BaseHash { ng: ng, salt: f1 };
-    let f2 = BaseHash { ng: ng, salt: f2 };
-
+fn from_args(
+    ng: usize,
+    seed1: u64,
+    seed2: u64,
+    indices: Vec<usize>,
+    values: Vec<usize>,
+    key_tags: Vec<u8>,
+    key_offsets: Vec<u32>,
+    key_data: Vec<u8>,
+) -> Hash {
     Hash {
         ng,
-        f1: f1,
-        f2: f2,
-        indices: indices,
+        seed1,
+        seed2,
+        indices,
+        values,
+        key_tags,
+        key_offsets,
+        key_data,
     }
 }
-
 
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {

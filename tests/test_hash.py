@@ -20,12 +20,12 @@ def test_values():
             assert h[v] == k
 
 
-# def test_custom_values():
-#     values = [3*k + 9 for k in range(len(keys))]
-#     for _ in range(32):
-#         h = generate_hash(keys, values=values)
-#         for k, v in zip(keys, values):
-#             assert h[k] == v
+def test_custom_values():
+    values = [3 * k + 9 for k in range(len(keys))]
+    for _ in range(32):
+        h = generate_hash(keys, values=values)
+        for key, value in zip(keys, values):
+            assert h[key] == value
 
 
 def test_creation(benchmark):
@@ -44,3 +44,17 @@ def test_pickle():
     h = pickle.loads(dump)
     for k, v in enumerate(many_keys):
         assert h[v] == k
+
+
+def test_missing_key_raises_key_error():
+    h = generate_hash(keys)
+    with pytest.raises(KeyError):
+        h["not present"]
+
+
+def test_missing_key_raises_key_error_after_pickle():
+    h = generate_hash(keys)
+    dump = pickle.dumps(h)
+    h = pickle.loads(dump)
+    with pytest.raises(KeyError):
+        h["still not present"]

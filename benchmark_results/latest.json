@@ -1,0 +1,112 @@
+[
+  {
+    "implementation": "dict",
+    "size": 10000,
+    "build_seconds": 0.001473459997214377,
+    "hit_lookup_seconds": 0.0034283020067960024,
+    "miss_lookup_seconds": 0.01543596398551017,
+    "lookup_repeats": 32,
+    "lookup_batch": 2048,
+    "rss_delta_bytes": 434176,
+    "serialized_bytes": 259807
+  },
+  {
+    "implementation": "perfect_hash",
+    "size": 10000,
+    "build_seconds": 0.02587770001264289,
+    "hit_lookup_seconds": 0.01235150097636506,
+    "miss_lookup_seconds": 0.03556712198769674,
+    "lookup_repeats": 32,
+    "lookup_batch": 2048,
+    "rss_delta_bytes": 1245184,
+    "serialized_bytes": 358801
+  },
+  {
+    "implementation": "dict",
+    "size": 50000,
+    "build_seconds": 0.007897873991169035,
+    "hit_lookup_seconds": 0.0033285769750364125,
+    "miss_lookup_seconds": 0.014987169008236378,
+    "lookup_repeats": 32,
+    "lookup_batch": 2048,
+    "rss_delta_bytes": 3317760,
+    "serialized_bytes": 1300031
+  },
+  {
+    "implementation": "perfect_hash",
+    "size": 50000,
+    "build_seconds": 0.5384730290388688,
+    "hit_lookup_seconds": 0.021332358999643475,
+    "miss_lookup_seconds": 0.046020243025850505,
+    "lookup_repeats": 32,
+    "lookup_batch": 2048,
+    "rss_delta_bytes": 5271552,
+    "serialized_bytes": 1777270
+  },
+  {
+    "implementation": "dict",
+    "size": 100000,
+    "build_seconds": 0.03976792102912441,
+    "hit_lookup_seconds": 0.005759880994446576,
+    "miss_lookup_seconds": 0.015540133987087756,
+    "lookup_repeats": 32,
+    "lookup_batch": 2048,
+    "rss_delta_bytes": 6844416,
+    "serialized_bytes": 2669248
+  },
+  {
+    "implementation": "perfect_hash",
+    "size": 100000,
+    "build_seconds": 0.8630926329642534,
+    "hit_lookup_seconds": 0.01371507003204897,
+    "miss_lookup_seconds": 0.049410548992455006,
+    "lookup_repeats": 32,
+    "lookup_batch": 2048,
+    "rss_delta_bytes": 8585216,
+    "serialized_bytes": 3681812
+  },
+  {
+    "implementation": "dict",
+    "size": 500000,
+    "build_seconds": 0.2693226109840907,
+    "hit_lookup_seconds": 0.007220808009151369,
+    "miss_lookup_seconds": 0.02420664601959288,
+    "lookup_repeats": 32,
+    "lookup_batch": 2048,
+    "rss_delta_bytes": 31227904,
+    "serialized_bytes": 13871587
+  },
+  {
+    "implementation": "perfect_hash",
+    "size": 500000,
+    "build_seconds": 4.097636029007845,
+    "hit_lookup_seconds": 0.024715595995076,
+    "miss_lookup_seconds": 0.04766133596422151,
+    "lookup_repeats": 32,
+    "lookup_batch": 2048,
+    "rss_delta_bytes": 33755136,
+    "serialized_bytes": 18862719
+  },
+  {
+    "implementation": "dict",
+    "size": 1000000,
+    "build_seconds": 0.4217435679747723,
+    "hit_lookup_seconds": 0.0145102150272578,
+    "miss_lookup_seconds": 0.03013965697027743,
+    "lookup_repeats": 32,
+    "lookup_batch": 2048,
+    "rss_delta_bytes": 62676992,
+    "serialized_bytes": 27874513
+  },
+  {
+    "implementation": "perfect_hash",
+    "size": 1000000,
+    "build_seconds": 10.703375886019785,
+    "hit_lookup_seconds": 0.026052435976453125,
+    "miss_lookup_seconds": 0.060308418003842235,
+    "lookup_repeats": 32,
+    "lookup_batch": 2048,
+    "rss_delta_bytes": 67702784,
+    "serialized_bytes": 37964832
+  }
+]

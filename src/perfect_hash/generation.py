@@ -21,12 +21,21 @@ class Hash:
     # those methods are to make the object pickable
     def __getstate__(self):
         state = self._hasher.dump()
-        keywords = ('ng', 'f1', 'f2', 'indices')
+        keywords = ("ng", "seed1", "seed2", "indices", "values", "key_tags", "key_offsets", "key_data")
         return {k : s for k, s in zip(keywords, state)}
 
 
     def __setstate__(self, state):
-        self._hasher = from_args(state['ng'], state['f1'], state['f2'], state['indices'])
+        self._hasher = from_args(
+            state["ng"],
+            state["seed1"],
+            state["seed2"],
+            state["indices"],
+            state["values"],
+            state["key_tags"],
+            state["key_offsets"],
+            state["key_data"],
+        )
 
 
 def generate_hash(
@@ -53,10 +62,12 @@ def generate_hash(
 
     _keys = list(keys)
 
-    if values:
-        s = set(values)
-        assert len(values) == len(s)
+    if values is not None:
         values = list(values)
+        if len(values) != len(_keys):
+            raise ValueError("values must have the same length as keys.")
+        if len(values) != len(set(values)):
+            raise ValueError("All values must be unique.")
     else:
         values = list(range(len(_keys)))
 
