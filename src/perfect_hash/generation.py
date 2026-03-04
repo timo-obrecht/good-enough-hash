@@ -1,9 +1,9 @@
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from perfect_hash._core import generate_hasher, from_args
 
 
-class Hash:
+class Hash[T]:
 
     # make this thing picklable
     # https://docs.python.org/3/library/pickle.html#what-can-be-pickled-and-unpickled
@@ -14,35 +14,42 @@ class Hash:
     def __call__(self, item: str):
         return self._hasher(item)
     
-    def __getitem__(self, item: str) -> int:
+    def __getitem__(self, item: str) -> T:
         return self._hasher(item)
 
 
     # those methods are to make the object pickable
     def __getstate__(self):
         state = self._hasher.dump()
-        keywords = ("ng", "seed1", "seed2", "indices", "values", "key_tags", "key_offsets", "key_data")
+        keywords = (
+            "tag_seed",
+            "bucket_seed",
+            "bucket_count",
+            "table_len",
+            "pilots",
+            "values",
+            "tags",
+        )
         return {k : s for k, s in zip(keywords, state)}
 
 
     def __setstate__(self, state):
         self._hasher = from_args(
-            state["ng"],
-            state["seed1"],
-            state["seed2"],
-            state["indices"],
+            state["tag_seed"],
+            state["bucket_seed"],
+            state["bucket_count"],
+            state["table_len"],
+            state["pilots"],
             state["values"],
-            state["key_tags"],
-            state["key_offsets"],
-            state["key_data"],
+            state["tags"],
         )
 
 
 def generate_hash(
     
         keys: list[str] | tuple[str],
-        values: Optional[list[int]] = None,
-        ) -> Callable[[str], int]:
+        values: Optional[list[T]] = None,
+        ) -> Callable[[str], T]:
     """Generate a perfect hash function for a set of keys.
 
     Args:
@@ -63,14 +70,12 @@ def generate_hash(
     _keys = list(keys)
 
     if values is not None:
-        values = list(values)
-        if len(values) != len(_keys):
+        _values = list(values)
+        if len(_values) != len(_keys):
             raise ValueError("values must have the same length as keys.")
-        if len(values) != len(set(values)):
-            raise ValueError("All values must be unique.")
     else:
-        values = list(range(len(_keys)))
+        _values = list(range(len(_keys)))
 
     # Generate the perfect hash function.
-    h = generate_hasher(_keys, values)
+    h = generate_hasher(_keys, _values)
     return Hash(h)

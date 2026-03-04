@@ -28,6 +28,20 @@ def test_custom_values():
             assert h[key] == value
 
 
+def test_duplicate_values():
+    values = [0 for _ in keys]
+    h = generate_hash(keys, values=values)
+    for key in keys:
+        assert h[key] == 0
+
+
+def test_python_object_values():
+    values = [{"key": key} for key in keys]
+    h = generate_hash(keys, values=values)
+    for key, value in zip(keys, values):
+        assert h[key] is value
+
+
 def test_creation(benchmark):
     benchmark.pedantic(generate_hash, args=(many_keys, ), rounds=10)  
 
